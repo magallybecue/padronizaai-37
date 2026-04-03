@@ -2,7 +2,6 @@ import { useState, useEffect } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
-import { Badge } from "@/components/ui/badge";
 import { 
   CheckCircle, 
   Clock, 
@@ -13,126 +12,79 @@ import {
   FileText
 } from "lucide-react";
 import { useLocation, useNavigate } from "react-router-dom";
+import { apiClient, UploadResponse } from "@/lib/api";
 
-interface ProcessingLog {
-  id: number;
-  time: string;
-  item: string;
-  status: 'matched' | 'pending' | 'not_found';
-  confidence?: number;
-  matchedItem?: string;
-}
 
 export default function Processing() {
   const location = useLocation();
   const navigate = useNavigate();
-  const { fileName, totalItems } = location.state || { fileName: "arquivo.xlsx", totalItems: 1250 };
+  const { uploadId, fileName, totalItems } = location.state || {};
 
-  const [progress, setProgress] = useState(0);
-  const [processedItems, setProcessedItems] = useState(0);
-  const [isRunning, setIsRunning] = useState(true);
-  const [logs, setLogs] = useState<ProcessingLog[]>([]);
-  const [stats, setStats] = useState({
-    matched: 0,
-    pending: 0,
-    notFound: 0
-  });
+  const [uploadStatus, setUploadStatus] = useState<UploadResponse | null>(null);
+  const [isPolling, setIsPolling] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  // Mock processing simulation
+  // Real-time polling for upload status
   useEffect(() => {
-    if (!isRunning) return;
+    if (!uploadId || !isPolling) return;
 
-    const interval = setInterval(() => {
-      setProgress(prev => {
-        const newProgress = Math.min(prev + Math.random() * 2, 100);
-        const newProcessedItems = Math.floor((newProgress / 100) * totalItems);
-        setProcessedItems(newProcessedItems);
+    const pollStatus = async () => {
+      try {
+        const status = await apiClient.getProcessingStatus(uploadId);
+        setUploadStatus(status);
 
-        // Add mock log entries
-        if (Math.random() > 0.7 && logs.length < 50) {
-          const mockItems = [
-            "Caneta esferográfica azul",
-            "Papel A4 75g/m²",
-            "Mouse óptico USB",
-            "Grampeador de mesa",
-            "Lápis HB nº 2",
-            "Borracha escolar",
-            "Régua de 30cm",
-            "Calculadora científica",
-            "Tinta para impressora",
-            "CD-R 700MB"
-          ];
-
-          const statuses: ('matched' | 'pending' | 'not_found')[] = ['matched', 'matched', 'matched', 'pending', 'not_found'];
-          const status = statuses[Math.floor(Math.random() * statuses.length)];
-          const item = mockItems[Math.floor(Math.random() * mockItems.length)];
-
-          const newLog: ProcessingLog = {
-            id: Date.now(),
-            time: new Date().toLocaleTimeString(),
-            item,
-            status,
-            confidence: status === 'matched' ? Math.floor(Math.random() * 30) + 70 : undefined,
-            matchedItem: status === 'matched' ? `${item} - Padrão CATMAT` : undefined
-          };
-
-          setLogs(prev => [newLog, ...prev.slice(0, 49)]);
-          setStats(prev => ({
-            matched: prev.matched + (status === 'matched' ? 1 : 0),
-            pending: prev.pending + (status === 'pending' ? 1 : 0),
-            notFound: prev.notFound + (status === 'not_found' ? 1 : 0)
-          }));
-        }
-
-        if (newProgress >= 100) {
+        // If processing is complete, navigate to results
+        if (status.status === 'COMPLETED') {
+          setIsPolling(false);
           setTimeout(() => {
-            navigate("/review", { 
+            navigate("/results", { 
               state: { 
-                fileName,
-                totalItems,
-                processedItems: newProcessedItems,
-                stats 
+                uploadId,
+                fileName: status.filename,
+                totalItems: status.totalRows,
+                processedItems: status.processedRows,
+                matchedItems: status.matchedRows,
+                errorItems: status.errorRows
               }
             });
           }, 1000);
+        } else if (status.status === 'FAILED') {
+          setIsPolling(false);
+          setError('Processamento falhou. Tente novamente.');
         }
+      } catch (error) {
+        console.error('Error polling status:', error);
+        setError(error instanceof Error ? error.message : 'Erro ao buscar status');
+      }
+    };
 
-        return newProgress;
-      });
-    }, 100);
+    // Poll immediately and then every 2 seconds
+    pollStatus();
+    const interval = setInterval(pollStatus, 2000);
 
     return () => clearInterval(interval);
-  }, [isRunning, totalItems, navigate, fileName, logs.length, stats]);
+  }, [uploadId, isPolling, navigate]);
 
-  const toggleProcessing = () => {
-    setIsRunning(!isRunning);
-  };
+  // Redirect if no uploadId
+  useEffect(() => {
+    if (!uploadId) {
+      navigate('/upload');
+    }
+  }, [uploadId, navigate]);
+
+  if (!uploadId) {
+    return null;
+  }
+
+  // Calculate progress percentage
+  const progress = uploadStatus ? 
+    (uploadStatus.processedRows / uploadStatus.totalRows) * 100 : 0;
 
   const stopProcessing = () => {
-    setIsRunning(false);
-    navigate("/review", { 
-      state: { 
-        fileName,
-        totalItems,
-        processedItems,
-        stats,
-        stopped: true
-      }
-    });
+    setIsPolling(false);
+    navigate("/upload");
   };
 
-  const getStatusBadge = (status: string) => {
-    switch (status) {
-      case "matched":
-        return <Badge className="bg-success text-success-foreground">Match Encontrado</Badge>;
-      case "pending":
-        return <Badge className="bg-warning text-warning-foreground">Revisão Manual</Badge>;
-      case "not_found":
-        return <Badge variant="destructive">Não Encontrado</Badge>;
-      default:
-        return <Badge variant="secondary">Processando</Badge>;
-    }
-  };
 
   return (
     <div className="space-y-6">
@@ -140,29 +92,24 @@ export default function Processing() {
         <div>
           <h1 className="text-3xl font-bold text-foreground">Processamento em Andamento</h1>
           <p className="text-muted-foreground">
-            Arquivo: {fileName}
+            Arquivo: {uploadStatus?.filename || fileName || 'Carregando...'}
           </p>
         </div>
         <div className="flex space-x-3">
-          <Button variant="outline" onClick={toggleProcessing}>
-            {isRunning ? (
-              <>
-                <Pause className="mr-2 h-4 w-4" />
-                Pausar
-              </>
-            ) : (
-              <>
-                <Play className="mr-2 h-4 w-4" />
-                Continuar
-              </>
-            )}
-          </Button>
           <Button variant="destructive" onClick={stopProcessing}>
             <X className="mr-2 h-4 w-4" />
-            Parar
+            Cancelar
           </Button>
         </div>
       </div>
+
+      {/* Error Display */}
+      {error && (
+        <div className="bg-destructive/15 border border-destructive/20 rounded-lg p-4">
+          <p className="text-destructive font-medium">Erro no Processamento</p>
+          <p className="text-destructive/80 text-sm">{error}</p>
+        </div>
+      )}
 
       {/* Progress Overview */}
       <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
@@ -174,7 +121,7 @@ export default function Processing() {
           <CardContent>
             <div className="text-2xl font-bold">{Math.round(progress)}%</div>
             <p className="text-xs text-muted-foreground">
-              {processedItems.toLocaleString()} de {totalItems.toLocaleString()} itens
+              {uploadStatus?.processedRows?.toLocaleString() || 0} de {uploadStatus?.totalRows?.toLocaleString() || 0} itens
             </p>
           </CardContent>
         </Card>
@@ -185,20 +132,22 @@ export default function Processing() {
             <CheckCircle className="h-4 w-4 text-success" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-success">{stats.matched}</div>
+            <div className="text-2xl font-bold text-success">{uploadStatus?.matchedRows || 0}</div>
             <p className="text-xs text-muted-foreground">
-              {processedItems > 0 ? Math.round((stats.matched / processedItems) * 100) : 0}% do total processado
+              {uploadStatus?.processedRows && uploadStatus.processedRows > 0 
+                ? Math.round((uploadStatus.matchedRows / uploadStatus.processedRows) * 100) 
+                : 0}% do total processado
             </p>
           </CardContent>
         </Card>
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Revisão Manual</CardTitle>
+            <CardTitle className="text-sm font-medium">Erros/Revisão</CardTitle>
             <AlertTriangle className="h-4 w-4 text-warning" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-warning">{stats.pending}</div>
+            <div className="text-2xl font-bold text-warning">{uploadStatus?.errorRows || 0}</div>
             <p className="text-xs text-muted-foreground">
               Requerem validação manual
             </p>
@@ -207,13 +156,17 @@ export default function Processing() {
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Não Encontrados</CardTitle>
-            <X className="h-4 w-4 text-destructive" />
+            <CardTitle className="text-sm font-medium">Status</CardTitle>
+            <Clock className="h-4 w-4 text-primary" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-destructive">{stats.notFound}</div>
+            <div className="text-lg font-bold text-primary">
+              {uploadStatus?.status === 'PROCESSING' ? 'Processando' :
+               uploadStatus?.status === 'COMPLETED' ? 'Concluído' :
+               uploadStatus?.status === 'PENDING' ? 'Aguardando' : 'Carregando...'}
+            </div>
             <p className="text-xs text-muted-foreground">
-              Sem correspondência encontrada
+              Status atual do processamento
             </p>
           </CardContent>
         </Card>
@@ -224,7 +177,9 @@ export default function Processing() {
         <CardHeader>
           <CardTitle>Progresso do Processamento</CardTitle>
           <CardDescription>
-            {isRunning ? "Processando itens..." : "Processamento pausado"}
+            {uploadStatus?.status === 'PROCESSING' ? "Processando itens..." : 
+             uploadStatus?.status === 'COMPLETED' ? "Processamento concluído!" :
+             "Preparando processamento..."}
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -232,59 +187,56 @@ export default function Processing() {
             <div>
               <div className="flex justify-between text-sm mb-2">
                 <span>Itens processados</span>
-                <span>{processedItems.toLocaleString()} / {totalItems.toLocaleString()}</span>
+                <span>{uploadStatus?.processedRows?.toLocaleString() || 0} / {uploadStatus?.totalRows?.toLocaleString() || 0}</span>
               </div>
               <Progress value={progress} className="h-2" />
             </div>
             <div className="text-sm text-muted-foreground">
-              Tempo estimado restante: {Math.round((100 - progress) * 0.5)} segundos
+              {uploadStatus?.status === 'PROCESSING' && progress > 0 && progress < 100 && (
+                `Processamento em andamento...`
+              )}
+              {uploadStatus?.status === 'COMPLETED' && (
+                'Processamento finalizado com sucesso!'
+              )}
+              {uploadStatus?.status === 'PENDING' && (
+                'Aguardando início do processamento...'
+              )}
             </div>
           </div>
         </CardContent>
       </Card>
 
-      {/* Processing Log */}
+      {/* Upload Information */}
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center space-x-2">
             <FileText className="h-5 w-5" />
-            <span>Log de Processamento</span>
+            <span>Informações do Upload</span>
           </CardTitle>
           <CardDescription>
-            Acompanhe os itens sendo processados em tempo real
+            Detalhes do arquivo sendo processado
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <div className="space-y-2 max-h-96 overflow-y-auto">
-            {logs.length === 0 ? (
-              <p className="text-center text-muted-foreground py-8">
-                Aguardando início do processamento...
-              </p>
-            ) : (
-              logs.map((log) => (
-                <div key={log.id} className="flex items-center justify-between space-x-4 rounded-lg border p-3">
-                  <div className="flex-1">
-                    <div className="flex items-center space-x-2">
-                      <span className="text-xs text-muted-foreground">{log.time}</span>
-                      <span className="text-sm font-medium">{log.item}</span>
-                    </div>
-                    {log.matchedItem && (
-                      <p className="text-xs text-muted-foreground mt-1">
-                        → {log.matchedItem}
-                      </p>
-                    )}
-                  </div>
-                  <div className="flex items-center space-x-2">
-                    {log.confidence && (
-                      <span className="text-xs text-muted-foreground">
-                        {log.confidence}%
-                      </span>
-                    )}
-                    {getStatusBadge(log.status)}
-                  </div>
-                </div>
-              ))
-            )}
+          <div className="grid grid-cols-2 gap-4 text-sm">
+            <div>
+              <span className="font-medium">ID do Upload:</span> {uploadId || 'Carregando...'}
+            </div>
+            <div>
+              <span className="font-medium">Nome do Arquivo:</span> {uploadStatus?.filename || 'Carregando...'}
+            </div>
+            <div>
+              <span className="font-medium">Algoritmo:</span> {uploadStatus?.algorithm || 'FUZZY'}
+            </div>
+            <div>
+              <span className="font-medium">Threshold:</span> {uploadStatus?.threshold || 0.8}
+            </div>
+            <div>
+              <span className="font-medium">Total de Linhas:</span> {uploadStatus?.totalRows?.toLocaleString() || 0}
+            </div>
+            <div>
+              <span className="font-medium">Criado em:</span> {uploadStatus?.createdAt ? new Date(uploadStatus.createdAt).toLocaleString() : 'Carregando...'}
+            </div>
           </div>
         </CardContent>
       </Card>

@@ -2,6 +2,7 @@ import { ReactNode } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
+import { ConnectionStatus } from "./ConnectionStatus";
 import { 
   FileText, 
   History, 
@@ -87,6 +88,7 @@ export default function Layout({ children }: LayoutProps) {
         {/* Main Content */}
         <main className="flex-1 overflow-auto">
           <div className="p-6">
+            <ConnectionStatus />
             {children}
           </div>
         </main>

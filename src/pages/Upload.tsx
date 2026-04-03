@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useCallback } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
@@ -11,121 +11,57 @@ import {
   AlertCircle,
   CheckCircle,
   X,
-  Play
+  Play,
+  Loader2
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
-
-interface UploadedFile {
-  name: string;
-  size: number;
-  type: string;
-  preview?: {
-    totalRows: number;
-    columns: string[];
-    sampleData: string[][];
-  };
-}
+import { useUpload } from "@/hooks/useUpload";
 
 export default function Upload() {
-  const [dragActive, setDragActive] = useState(false);
-  const [uploadedFile, setUploadedFile] = useState<UploadedFile | null>(null);
-  const [processing, setProcessing] = useState(false);
-  const [progress, setProgress] = useState(0);
   const navigate = useNavigate();
+  const { 
+    uploadedFile, 
+    isUploading, 
+    uploadProgress, 
+    uploadError, 
+    uploadFile, 
+    removeFile, 
+    startProcessing 
+  } = useUpload();
 
   const handleDrag = useCallback((e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    if (e.type === "dragenter" || e.type === "dragover") {
-      setDragActive(true);
-    } else if (e.type === "dragleave") {
-      setDragActive(false);
-    }
   }, []);
 
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    setDragActive(false);
 
     if (e.dataTransfer.files && e.dataTransfer.files[0]) {
-      handleFile(e.dataTransfer.files[0]);
+      uploadFile(e.dataTransfer.files[0]);
     }
-  }, []);
+  }, [uploadFile]);
 
   const handleFileInput = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
-      handleFile(e.target.files[0]);
+      uploadFile(e.target.files[0]);
     }
   };
 
-  const handleFile = (file: File) => {
-    // Mock file validation and preview
-    if (file.size > 10 * 1024 * 1024) { // 10MB limit
-      alert("Arquivo muito grande. Máximo 10MB permitido.");
-      return;
-    }
+  const handleStartProcessing = async () => {
+    const uploadId = await startProcessing();
 
-    const allowedTypes = [
-      'text/csv',
-      'application/vnd.ms-excel',
-      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-      'text/plain'
-    ];
-
-    if (!allowedTypes.includes(file.type)) {
-      alert("Formato não suportado. Use CSV, XLS, XLSX ou TXT.");
-      return;
-    }
-
-    // Mock preview data
-    const mockPreview = {
-      totalRows: 1250,
-      columns: ["Nome do Material", "Quantidade", "Unidade"],
-      sampleData: [
-        ["Caneta esferográfica azul", "100", "unidade"],
-        ["Papel A4 75g/m²", "50", "resma"],
-        ["Mouse óptico USB", "25", "unidade"],
-        ["Grampeador de mesa", "10", "unidade"]
-      ]
-    };
-
-    setUploadedFile({
-      name: file.name,
-      size: file.size,
-      type: file.type,
-      preview: mockPreview
-    });
-  };
-
-  const startProcessing = () => {
-    setProcessing(true);
-    setProgress(0);
-
-    // Mock processing simulation
-    const interval = setInterval(() => {
-      setProgress(prev => {
-        if (prev >= 100) {
-          clearInterval(interval);
-          setTimeout(() => {
-            navigate("/processing", { 
-              state: { 
-                fileName: uploadedFile?.name,
-                totalItems: uploadedFile?.preview?.totalRows 
-              }
-            });
-          }, 500);
-          return 100;
+    if (uploadId) {
+      // Navigate to processing page
+      navigate("/processing", { 
+        state: { 
+          uploadId,
+          fileName: uploadedFile?.name,
+          totalItems: uploadedFile?.preview?.totalRows 
         }
-        return prev + Math.random() * 10;
       });
-    }, 200);
-  };
-
-  const removeFile = () => {
-    setUploadedFile(null);
-    setProcessing(false);
-    setProgress(0);
+    }
   };
 
   const formatFileSize = (bytes: number) => {
@@ -141,6 +77,21 @@ export default function Upload() {
       return <FileSpreadsheet className="h-8 w-8 text-success" />;
     }
     return <File className="h-8 w-8 text-primary" />;
+  };
+
+  const getStatusBadge = (status?: string) => {
+    switch (status) {
+      case 'PENDING':
+        return <Badge variant="secondary">Carregado</Badge>;
+      case 'PROCESSING':
+        return <Badge className="bg-warning text-warning-foreground">Processando</Badge>;
+      case 'COMPLETED':
+        return <Badge className="bg-success text-success-foreground">Concluído</Badge>;
+      case 'FAILED':
+        return <Badge variant="destructive">Erro</Badge>;
+      default:
+        return <Badge variant="outline">Pronto</Badge>;
+    }
   };
 
   return (
@@ -162,18 +113,22 @@ export default function Upload() {
         </AlertDescription>
       </Alert>
 
+      {/* Error Alert */}
+      {uploadError && (
+        <Alert variant="destructive">
+          <AlertCircle className="h-4 w-4" />
+          <AlertDescription>
+            {uploadError}
+          </AlertDescription>
+        </Alert>
+      )}
+
       {/* Upload Area */}
-      {!uploadedFile && (
+      {!uploadedFile && !isUploading && (
         <Card>
           <CardContent className="p-6">
             <div
-              className={`
-                relative border-2 border-dashed rounded-lg p-8 text-center transition-colors
-                ${dragActive 
-                  ? 'border-primary bg-primary/5' 
-                  : 'border-muted-foreground/25 hover:border-primary/50'
-                }
-              `}
+              className="relative border-2 border-dashed rounded-lg p-8 text-center transition-colors border-muted-foreground/25 hover:border-primary/50"
               onDragEnter={handleDrag}
               onDragLeave={handleDrag}
               onDragOver={handleDrag}
@@ -193,20 +148,49 @@ export default function Upload() {
                 className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
                 accept=".csv,.xls,.xlsx,.txt"
                 onChange={handleFileInput}
+                disabled={isUploading}
               />
             </div>
           </CardContent>
         </Card>
       )}
 
+      {/* Upload Progress */}
+      {isUploading && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center space-x-3">
+              <Loader2 className="h-5 w-5 animate-spin text-primary" />
+              <span>Fazendo upload...</span>
+            </CardTitle>
+            <CardDescription>
+              Enviando arquivo para o servidor
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div>
+              <div className="flex justify-between text-sm mb-2">
+                <span>Progresso do upload</span>
+                <span>{Math.round(uploadProgress)}%</span>
+              </div>
+              <Progress value={uploadProgress} />
+            </div>
+            <p className="text-sm text-muted-foreground">
+              Aguarde enquanto o arquivo é carregado e processado...
+            </p>
+          </CardContent>
+        </Card>
+      )}
+
       {/* File Preview */}
-      {uploadedFile && !processing && (
+      {uploadedFile && !isUploading && (
         <Card>
           <CardHeader>
             <div className="flex items-center justify-between">
               <CardTitle className="flex items-center space-x-3">
                 {getFileIcon(uploadedFile.type)}
                 <span>Arquivo Carregado</span>
+                {uploadedFile.status && getStatusBadge(uploadedFile.status)}
               </CardTitle>
               <Button variant="ghost" size="sm" onClick={removeFile}>
                 <X className="h-4 w-4" />
@@ -222,11 +206,21 @@ export default function Upload() {
                 <span className="font-medium">Tamanho:</span> {formatFileSize(uploadedFile.size)}
               </div>
               <div>
-                <span className="font-medium">Total de linhas:</span> {uploadedFile.preview?.totalRows.toLocaleString()}
+                <span className="font-medium">ID do Upload:</span> {uploadedFile.id || 'Processando...'}
               </div>
               <div>
-                <span className="font-medium">Colunas:</span> {uploadedFile.preview?.columns.length}
+                <span className="font-medium">Status:</span> {uploadedFile.status || 'Carregado'}
               </div>
+              {uploadedFile.preview && (
+                <>
+                  <div>
+                    <span className="font-medium">Total de linhas:</span> {uploadedFile.preview.totalRows.toLocaleString()}
+                  </div>
+                  <div>
+                    <span className="font-medium">Colunas:</span> {uploadedFile.preview.columns.length}
+                  </div>
+                </>
+              )}
             </div>
 
             {uploadedFile.preview && (
@@ -263,38 +257,23 @@ export default function Upload() {
               <Button variant="outline" onClick={removeFile}>
                 Cancelar
               </Button>
-              <Button onClick={startProcessing}>
-                <Play className="mr-2 h-4 w-4" />
-                Iniciar Processamento
+              <Button 
+                onClick={handleStartProcessing}
+                disabled={uploadedFile.status === 'PROCESSING'}
+              >
+                {uploadedFile.status === 'PROCESSING' ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Processando...
+                  </>
+                ) : (
+                  <>
+                    <Play className="mr-2 h-4 w-4" />
+                    Iniciar Processamento
+                  </>
+                )}
               </Button>
             </div>
-          </CardContent>
-        </Card>
-      )}
-
-      {/* Processing State */}
-      {processing && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center space-x-3">
-              <CheckCircle className="h-5 w-5 text-success" />
-              <span>Processando arquivo...</span>
-            </CardTitle>
-            <CardDescription>
-              Carregando arquivo e iniciando o processamento
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div>
-              <div className="flex justify-between text-sm mb-2">
-                <span>Progresso do upload</span>
-                <span>{Math.round(progress)}%</span>
-              </div>
-              <Progress value={progress} />
-            </div>
-            <p className="text-sm text-muted-foreground">
-              O processamento será iniciado automaticamente após o upload...
-            </p>
           </CardContent>
         </Card>
       )}

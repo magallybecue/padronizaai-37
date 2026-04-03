@@ -1,3 +1,4 @@
+import { useState, useEffect } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
@@ -9,76 +10,42 @@ import {
   Clock, 
   TrendingUp,
   Download,
-  Search
+  Search,
+  AlertTriangle
 } from "lucide-react";
 import { Link } from "react-router-dom";
+import { apiClient } from "@/lib/api";
 
-// Mock data for dashboard
-const stats = [
-  {
-    title: "Total de Uploads",
-    value: "1,234",
-    change: "+12%",
-    icon: Upload,
-    color: "text-gov-blue"
-  },
-  {
-    title: "Itens Processados",
-    value: "45,678",
-    change: "+8%",
-    icon: FileText,
-    color: "text-gov-green"
-  },
-  {
-    title: "Taxa de Match",
-    value: "87.5%",
-    change: "+3%",
-    icon: CheckCircle,
-    color: "text-success"
-  },
-  {
-    title: "Tempo Médio",
-    value: "2.3min",
-    change: "-15%",
-    icon: Clock,
-    color: "text-warning"
-  }
-];
-
-const recentUploads = [
-  {
-    id: 1,
-    fileName: "lista_materiais_2024.xlsx",
-    items: 1250,
-    matched: 1089,
-    status: "completed",
-    date: "2024-01-15 14:30"
-  },
-  {
-    id: 2,
-    fileName: "compras_departamento_ti.csv",
-    items: 89,
-    matched: 76,
-    status: "completed",
-    date: "2024-01-15 11:20"
-  },
-  {
-    id: 3,
-    fileName: "materiais_escritorio.xlsx",
-    items: 456,
-    matched: 0,
-    status: "processing",
-    date: "2024-01-15 16:45"
-  }
-];
+interface DashboardStats {
+  totalUploads: number;
+  completedUploads: number;
+  processingUploads: number;
+  totalItemsProcessed: number;
+  totalItemsMatched: number;
+  totalItemsWithErrors: number;
+  matchRate: number;
+  recentUploads: Array<{
+    id: string;
+    filename: string;
+    originalName: string;
+    status: 'PENDING' | 'PROCESSING' | 'COMPLETED' | 'FAILED';
+    totalRows: number;
+    processedRows: number;
+    matchedRows: number;
+    errorRows: number;
+    matchRate: number;
+    createdAt: string;
+    updatedAt: string;
+  }>;
+}
 
 const getStatusBadge = (status: string) => {
   switch (status) {
-    case "completed":
+    case "COMPLETED":
       return <Badge className="bg-success text-success-foreground">Concluído</Badge>;
-    case "processing":
+    case "PROCESSING":
       return <Badge className="bg-warning text-warning-foreground">Processando</Badge>;
-    case "error":
+    case "FAILED":
       return <Badge variant="destructive">Erro</Badge>;
     default:
       return <Badge variant="secondary">Pendente</Badge>;
@@ -86,6 +53,85 @@ const getStatusBadge = (status: string) => {
 };
 
 export default function Dashboard() {
+  const [dashboardStats, setDashboardStats] = useState<DashboardStats | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const loadDashboardStats = async () => {
+      try {
+        setLoading(true);
+        const response = await apiClient.getDashboardStats();
+        const data = response.data || response;
+        setDashboardStats(data);
+      } catch (error) {
+        console.error('Error loading dashboard stats:', error);
+        setError(error instanceof Error ? error.message : 'Erro ao carregar estatísticas');
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    loadDashboardStats();
+  }, []);
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center min-h-screen">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto"></div>
+          <p className="mt-4 text-muted-foreground">Carregando dashboard...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="space-y-6">
+        <div>
+          <h1 className="text-3xl font-bold text-foreground">Dashboard</h1>
+          <p className="text-muted-foreground">Erro ao carregar dados</p>
+        </div>
+        <Card>
+          <CardContent className="p-6">
+            <p className="text-destructive">{error}</p>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
+  const stats = dashboardStats ? [
+    {
+      title: "Total de Uploads",
+      value: dashboardStats.totalUploads.toLocaleString(),
+      change: `${dashboardStats.completedUploads} concluídos`,
+      icon: Upload,
+      color: "text-primary"
+    },
+    {
+      title: "Itens Processados",
+      value: dashboardStats.totalItemsProcessed.toLocaleString(),
+      change: `${dashboardStats.totalItemsMatched.toLocaleString()} matches`,
+      icon: FileText,
+      color: "text-success"
+    },
+    {
+      title: "Taxa de Match",
+      value: `${dashboardStats.matchRate}%`,
+      change: `${dashboardStats.totalItemsWithErrors} erros`,
+      icon: CheckCircle,
+      color: "text-success"
+    },
+    {
+      title: "Processando Agora",
+      value: dashboardStats.processingUploads.toString(),
+      change: "uploads ativos",
+      icon: Clock,
+      color: "text-warning"
+    }
+  ] : [];
   return (
     <div className="space-y-6">
       {/* Welcome Section */}
@@ -143,29 +189,37 @@ export default function Dashboard() {
           </CardHeader>
           <CardContent>
             <div className="space-y-4">
-              {recentUploads.map((upload) => (
-                <div key={upload.id} className="flex items-center justify-between space-x-4 rounded-lg border p-4">
-                  <div className="flex-1 space-y-1">
-                    <p className="text-sm font-medium leading-none">
-                      {upload.fileName}
-                    </p>
-                    <p className="text-sm text-muted-foreground">
-                      {upload.items} itens • {upload.matched} processados
-                    </p>
-                    <p className="text-xs text-muted-foreground">
-                      {upload.date}
-                    </p>
+              {dashboardStats?.recentUploads.length === 0 ? (
+                <p className="text-center text-muted-foreground py-8">
+                  Nenhum upload encontrado. Faça seu primeiro upload!
+                </p>
+              ) : (
+                dashboardStats?.recentUploads.map((upload) => (
+                  <div key={upload.id} className="flex items-center justify-between space-x-4 rounded-lg border p-4">
+                    <div className="flex-1 space-y-1">
+                      <p className="text-sm font-medium leading-none">
+                        {upload.originalName || upload.filename}
+                      </p>
+                      <p className="text-sm text-muted-foreground">
+                        {upload.totalRows} itens • {upload.processedRows} processados • {upload.matchRate}% match
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        {new Date(upload.createdAt).toLocaleString()}
+                      </p>
+                    </div>
+                    <div className="flex items-center space-x-2">
+                      {getStatusBadge(upload.status)}
+                      {upload.status === "COMPLETED" && (
+                        <Button size="sm" variant="outline" asChild>
+                          <Link to="/results" state={{ uploadId: upload.id, fileName: upload.originalName }}>
+                            <Download className="h-4 w-4" />
+                          </Link>
+                        </Button>
+                      )}
+                    </div>
                   </div>
-                  <div className="flex items-center space-x-2">
-                    {getStatusBadge(upload.status)}
-                    {upload.status === "completed" && (
-                      <Button size="sm" variant="outline">
-                        <Download className="h-4 w-4" />
-                      </Button>
-                    )}
-                  </div>
-                </div>
-              ))}
+                ))
+              )}
             </div>
             <div className="mt-4 text-center">
               <Button variant="outline" asChild>
@@ -212,29 +266,37 @@ export default function Dashboard() {
         </Card>
       </div>
 
-      {/* Usage Overview */}
+      {/* System Overview */}
       <Card>
         <CardHeader>
-          <CardTitle>Visão Geral de Uso</CardTitle>
+          <CardTitle>Visão Geral do Sistema</CardTitle>
           <CardDescription>
-            Estatísticas do seu plano atual
+            Estatísticas e métricas da base CATMAT
           </CardDescription>
         </CardHeader>
         <CardContent>
           <div className="space-y-4">
             <div>
               <div className="flex items-center justify-between text-sm">
-                <span>Uploads utilizados este mês</span>
-                <span>27 de 50</span>
+                <span>Taxa de match global</span>
+                <span>{dashboardStats?.matchRate || 0}%</span>
               </div>
-              <Progress value={54} className="mt-2" />
+              <Progress value={dashboardStats?.matchRate || 0} className="mt-2" />
             </div>
             <div>
               <div className="flex items-center justify-between text-sm">
-                <span>Itens processados este mês</span>
-                <span>45,678 de 100,000</span>
+                <span>Uploads concluídos</span>
+                <span>{dashboardStats?.completedUploads || 0} de {dashboardStats?.totalUploads || 0}</span>
               </div>
-              <Progress value={45.7} className="mt-2" />
+              <Progress 
+                value={dashboardStats?.totalUploads ? (dashboardStats.completedUploads / dashboardStats.totalUploads) * 100 : 0} 
+                className="mt-2" 
+              />
+            </div>
+            <div className="text-sm text-muted-foreground">
+              <p>• Base CATMAT: 326.195 materiais carregados</p>
+              <p>• Sistema de matching em produção</p>
+              <p>• Algoritmo: Busca exata + palavras-chave</p>
             </div>
           </div>
         </CardContent>
