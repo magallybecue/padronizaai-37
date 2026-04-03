@@ -1,4 +1,4 @@
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3002';
+const API_BASE_URL = import.meta.env.VITE_API_URL || '';
 const API_TIMEOUT = parseInt(import.meta.env.VITE_API_TIMEOUT) || 30000;
 
 export interface ApiResponse<T> {
