@@ -1,0 +1,128 @@
+# docker-compose.yml
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    container_name: catmat-postgres
+    environment:
+      POSTGRES_USER: catmat_user
+      POSTGRES_PASSWORD: catmat_password
+      POSTGRES_DB: catmat_align 
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+    ports:
+      - "5432:5432"
+    networks:
+      - catmat-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U catmat_user -d catmat_align"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # Redis (opcional, para cache)
+  redis:
+    image: redis:7-alpine
+    container_name: catmat-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - catmat-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # Backend API
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: catmat-backend
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=postgresql://catmat_user:catmat_password@postgres:5432/catmat_align 
+      - REDIS_URL=redis://redis:6379
+      - JWT_SECRET=${JWT_SECRET}
+      - NEXT_PUBLIC_SUPABASE_URL=${NEXT_PUBLIC_SUPABASE_URL}
+      - SUPABASE_SERVICE_ROLE_KEY=${SUPABASE_SERVICE_ROLE_KEY}
+      - COMPRAS_GOV_API_URL=${COMPRAS_GOV_API_URL}
+    ports:
+      - "3001:3001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - catmat-network
+    volumes:
+      - ./uploads:/app/uploads
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3001/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Nginx (Load Balancer/Reverse Proxy)
+  nginx:
+    image: nginx:alpine
+    container_name: catmat-nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf
+      - ./ssl:/etc/nginx/ssl
+    depends_on:
+      - backend
+    networks:
+      - catmat-network
+    restart: unless-stopped
+
+  # Cron Job para sincronização (opcional)
+  cron:
+    image: node:18-alpine
+    container_name: catmat-cron
+    working_dir: /app
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=postgresql://catmat_user:catmat_password@postgres:5432/catmat_align 
+    volumes:
+      - ./scripts:/app/scripts
+      - ./src:/app/src
+      - ./prisma:/app/prisma
+      - ./package.json:/app/package.json
+      - ./tsconfig.json:/app/tsconfig.json
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - catmat-network
+    command: |
+      sh -c "
+        npm install &&
+        npx prisma generate &&
+        echo '0 2 * * * cd /app && npm run sync:catmat' | crontab - &&
+        crond -f
+      "
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+
+networks:
+  catmat-network:
+    driver: bridge
+
+---

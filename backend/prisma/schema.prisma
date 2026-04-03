@@ -1,0 +1,94 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Upload {
+  id            String            @id @default(cuid())
+  filename      String
+  originalName  String
+  mimeType      String
+  size          Int
+  status        UploadStatus      @default(PENDING)
+  totalRows     Int?
+  processedRows Int?
+  matchedRows   Int?
+  errorRows     Int?
+  algorithm     MatchingAlgorithm @default(FUZZY)
+  threshold     Float             @default(0.8)
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+  fileContent   String?
+  results       MatchingResult[]
+
+  @@map("uploads")
+}
+
+model MatchingResult {
+  id                String            @id @default(cuid())
+  uploadId          String
+  rowIndex          Int
+  originalText      String
+  catmatCode        String?
+  catmatDescription String?
+  matchScore        Float?
+  algorithm         MatchingAlgorithm
+  status            ResultStatus      @default(PENDING)
+  manualReview      Boolean           @default(false)
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+  upload            Upload            @relation(fields: [uploadId], references: [id], onDelete: Cascade)
+
+  @@index([uploadId])
+  @@index([catmatCode])
+  @@map("matching_results")
+}
+
+model CatmatMaterial {
+  id                  String   @id @default(cuid())
+  codigoItem          String   @unique
+  descricaoItem       String
+  unit                String?
+  Categoria           String?
+  Subcategoria        String?
+  codigoPdm           String?
+  nomePdm             String?
+  statusItem          Boolean  @default(true)
+  codigo_ncm          String?
+  searchVector        String?
+  keywords            String[]
+  dataHoraAtualizacao DateTime @default(now())
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  @@index([codigoItem])
+  @@index([descricaoItem])
+  @@index([Categoria])
+  @@index([codigoPdm])
+  @@map("catmat_materials")
+}
+
+enum UploadStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
+enum MatchingAlgorithm {
+  EXACT
+  FUZZY
+  KEYWORD
+  SIMILARITY
+}
+
+enum ResultStatus {
+  PENDING
+  MATCHED
+  NO_MATCH
+  MANUAL_REVIEW
+}

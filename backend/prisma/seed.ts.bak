@@ -1,0 +1,40 @@
+// prisma/seed.ts
+import { PrismaClient } from '@prisma/client';
+
+const prisma = new PrismaClient();
+
+async function main() {
+  console.log('<1 Starting database seed...');
+
+  // Criar usuário temporário se não existir
+  const existingUser = await prisma.user.findUnique({
+    where: { email: 'temp@example.com' }
+  });
+
+  if (!existingUser) {
+    const tempUser = await prisma.user.create({
+      data: {
+        id: 'temp-user',
+        email: 'temp@example.com',
+        name: 'Usuário Temporário',
+        password: 'temp-password', // Em produção, seria hasheado
+        plan: 'FREE'
+      }
+    });
+    
+    console.log(' Temp user created:', tempUser.email);
+  } else {
+    console.log('9 Temp user already exists:', existingUser.email);
+  }
+
+  console.log('<‰ Database seed completed!');
+}
+
+main()
+  .catch((e) => {
+    console.error('L Seed error:', e);
+    process.exit(1);
+  })
+  .finally(async () => {
+    await prisma.$disconnect();
+  });

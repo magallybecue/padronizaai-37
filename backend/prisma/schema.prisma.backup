@@ -1,0 +1,166 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  name      String?
+  password  String
+  plan      UserPlan @default(FREE)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  // exports   Export[]
+  // uploads   Upload[]
+
+  @@map("users")
+}
+
+model Upload {
+  id            String            @id @default(cuid())
+  filename      String
+  originalName  String
+  mimeType      String
+  size          Int
+  status        UploadStatus      @default(PENDING)
+  totalRows     Int?
+  processedRows Int?
+  matchedRows   Int?
+  errorRows     Int?
+  algorithm     MatchingAlgorithm @default(FUZZY)
+  threshold     Float             @default(0.8)
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+  // userId        String?
+  exports       Export[]
+  results       MatchingResult[]
+  // user          User?             @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("uploads")
+}
+
+model MatchingResult {
+  id                String            @id @default(cuid())
+  uploadId          String
+  rowIndex          Int
+  originalText      String
+  catmatCode        String?
+  catmatDescription String?
+  matchScore        Float?
+  algorithm         MatchingAlgorithm
+  status            ResultStatus      @default(PENDING)
+  manualReview      Boolean           @default(false)
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+  upload            Upload            @relation(fields: [uploadId], references: [id], onDelete: Cascade)
+
+  @@index([uploadId])
+  @@index([catmatCode])
+  @@map("matching_results")
+}
+
+model CatmatMaterial {
+  id                  String   @id @default(cuid())
+  codigoItem          String   @unique
+  descricaoItem       String
+  unit                String?
+  Categoria           String?
+  Subcategoria        String?
+  codigoPdm           String?
+  nomePdm             String?
+  statusItem          Boolean  @default(true)
+  codigo_ncm          String?
+  searchVector        String?
+  keywords            String[]
+  dataHoraAtualizacao DateTime @default(now())
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  @@index([codigoItem])
+  @@index([descricaoItem])
+  @@index([Categoria])
+  @@index([codigoPdm])
+  @@map("catmat_materials")
+}
+
+model Export {
+  id        String       @id @default(cuid())
+  uploadId  String
+  filename  String
+  format    ExportFormat
+  filters   Json?
+  totalRows Int
+  fileUrl   String?
+  fileSize  Int?
+  createdAt DateTime     @default(now())
+  // userId    String
+  upload    Upload       @relation(fields: [uploadId], references: [id], onDelete: Cascade)
+  // user      User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("exports")
+}
+
+model SyncLog {
+  id               String     @id @default(cuid())
+  type             SyncType
+  status           SyncStatus @default(RUNNING)
+  totalRecords     Int?
+  processedRecords Int?
+  errorRecords     Int?
+  message          String?
+  errorDetail      String?
+  startedAt        DateTime   @default(now())
+  finishedAt       DateTime?
+
+  @@map("sync_logs")
+}
+
+enum UserPlan {
+  FREE
+  PREMIUM
+  ENTERPRISE
+}
+
+enum UploadStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
+enum MatchingAlgorithm {
+  EXACT
+  FUZZY
+  KEYWORD
+  SIMILARITY
+}
+
+enum ResultStatus {
+  PENDING
+  MATCHED
+  NO_MATCH
+  MANUAL_REVIEW
+}
+
+enum ExportFormat {
+  CSV
+  XLSX
+  JSON
+}
+
+enum SyncType {
+  CATMAT_FULL
+  CATMAT_INCREMENTAL
+  MATERIALS_CLEANUP
+}
+
+enum SyncStatus {
+  RUNNING
+  COMPLETED
+  FAILED
+}
