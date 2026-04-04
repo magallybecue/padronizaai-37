@@ -154,18 +154,19 @@ export class EnhancedMatchingService {
     return jaro + l * weight * (1 - jaro);
   }
 
-  // 2. Jaccard Token Index (Para penalizar textos desordenados ou com falta drástica de características)
+  // 2. Jaccard Token Index Híbrido
+  // Combina Jaccard padrão (penaliza tokens extras) com Coeficiente de Sobreposição (overlap/recall),
+  // resolvendo o problema de entradas verbosas (CATMAT é conciso, input do usuário é longo com rótulos).
   private jaccardIndex(tokens1: string[], tokens2: string[]): number {
     if (tokens1.length === 0 && tokens2.length === 0) return 1;
     if (tokens1.length === 0 || tokens2.length === 0) return 0;
-    
+
     const set1 = new Set(tokens1);
     const set2 = new Set(tokens2);
-    
+
     // Contar a interseção verdadeira
     let intersectionCount = 0;
     for (const t1 of set1) {
-        // Tolerância de pequeno erro topográfico ao cruzar tokens inter-arrays
         for (const t2 of set2) {
             if (t1 === t2 || this.jaroWinkler(t1, t2) > 0.88) {
                 intersectionCount++;
@@ -173,13 +174,25 @@ export class EnhancedMatchingService {
             }
         }
     }
+
+    // Jaccard padrão: intersection / union
     const unionSize = set1.size + set2.size - intersectionCount;
-    return unionSize === 0 ? 0 : intersectionCount / unionSize;
+    const jaccard = unionSize === 0 ? 0 : intersectionCount / unionSize;
+
+    // Coeficiente de Sobreposição: intersection / min(|A|, |B|)
+    // Essencial quando o candidato CATMAT é um subconjunto do input verboso do usuário
+    const overlap = intersectionCount / Math.min(set1.size, set2.size);
+
+    // Média dos dois: mantém discriminação (via Jaccard) + sensibilidade a subconjuntos (via Overlap)
+    return (jaccard + overlap) / 2;
   }
 
   // Handle Regex Collation (Tubo AC SCH40 -> SCH 40)
   private handleCollationRegex(text: string): string {
     return text
+      // Preservar frações compostas antes de tudo: "1 1/4" -> "1_1_4", "3/4" -> "3_4"
+      .replace(/(\d+)\s+(\d+)\/(\d+)/g, '$1_$2_$3') // ex: "1 1/4" -> "1_1_4"
+      .replace(/(\d+)\/(\d+)/g, '$1_$2')             // ex: "3/4" -> "3_4"
       // Adicionar espacamento entre letras e numeros sem espaço.
       .replace(/([a-zA-Z]+)(\d+)/g, '$1 $2') // ex: SCH40 -> SCH 40
       .replace(/(\d+)([a-zA-Z]+)/g, '$1 $2') // ex: 40SCH -> 40 SCH
@@ -208,41 +221,38 @@ export class EnhancedMatchingService {
     }
 
     // 1. Filtragem DB First (Otimização pesada!)
-    // Usamos o texto normalizado para a matemática, mas para o BANCO (Postgres)
-    // precisamos dos tokens com acento (pois ILIKE nao ignora acento por padrao)
-    const rawCollateText = this.handleCollationRegex(material);
-    
-    // Limpamos pontuação colada (ex: ALTURA: vira ALTURA)
-    const cleanRawText = rawCollateText.toLowerCase().replace(/[^\w\s\u00C0-\u017F]/g, ' ');
-    const dbSearchTokens = this.tokenize(cleanRawText);
-    const expandedTokens = searchTokens; // searchTokens ja sao minusculos e sem acento
-    
-    // Lista final de termos para o banco
-    const allSearchTokens = Array.from(new Set([...dbSearchTokens, ...expandedTokens]));
-    
-    const importantTokens = this.getImportantTokens(allSearchTokens);
-    
+    // Usamos searchTokens (já normalizados, sem acento, abreviações expandidas) para
+    // garantir consistência na busca e evitar duplicatas acentuadas do dbSearchTokens.
+    const importantTokens = this.getImportantTokens(searchTokens);
+
     const genericTerms = new Set([
+      // Genéricos de item
       'peca', 'item', 'material', 'modelo', 'marca', 'produto',
-      'especificacao', 'comprimento', 'altura', 'largura', 'dimensoes', 
-      'caracteristicas', 'adicionais', 'nacional', 'referencia', 'tipo',
+      // Rótulos de atributos estruturais (vindos de "ATRIBUTO: VALOR")
+      'especificacao', 'aplicacao', 'embarcacao', 'maritimo', 'naval',
+      'diametro', 'nominal', 'externo', 'interno', 'paredes', 'espessura',
+      'formato', 'norma', 'classe', 'serie', 'fabricante',
+      // Dimensões genéricas
+      'comprimento', 'altura', 'largura', 'dimensoes',
+      'caracteristicas', 'adicionais', 'nacional', 'referencia',
+      // Unidades de medida
       'milimetros', 'centimetros', 'metros', 'polegadas', 'gramas', 'quilos',
-      'mm', 'pol', 'cm', 'm', 'kg', 'un', 'unid', 'cx'
+      'mm', 'pol', 'cm', 'kg', 'un', 'unid', 'cx'
     ]);
-    
+
     const coreNamingTerms = new Set(['tubo', 'valvula', 'registo', 'parafuso', 'porca', 'arruela', 'flange', 'cabo', 'chapa', 'conector', 'terminal', 'uniao', 'joelho', 'curva', 'te', 'reducao', 'perfil', 'barra', 'disco']);
-    const coreItemToken = allSearchTokens.find(t => coreNamingTerms.has(this.normalizeText(t)));
+    const coreItemToken = searchTokens.find(t => coreNamingTerms.has(t));
 
     // Agora pegamos as palavras especificas que NAO sejam genericas
     const specificTokens = importantTokens
-      .filter(t => !genericTerms.has(this.normalizeText(t)) && t !== coreItemToken)
+      .filter(t => !genericTerms.has(t) && t !== coreItemToken && t.length > 2)
       .sort((a, b) => b.length - a.length);
 
     // Montamos o AND com o Nome do item + 2 mais especificos
-    let tokensToAndSearch = [];
+    let tokensToAndSearch: string[] = [];
     if (coreItemToken) tokensToAndSearch.push(coreItemToken);
-    
-    // Adicionar as palavras mais especificas (ex: ALUMINIO, COBRE)
+
+    // Adicionar as palavras mais especificas (ex: ALUMINIO, COBRE, COSTURA)
     tokensToAndSearch.push(...specificTokens.slice(0, 2));
 
     // Se nao achamos nada, garantimos pelo menos o core e as especificas se existirem
@@ -250,9 +260,10 @@ export class EnhancedMatchingService {
       const rest = importantTokens.filter(t => !tokensToAndSearch.includes(t) && t.length > 2);
       tokensToAndSearch.push(...rest.slice(0, 2 - tokensToAndSearch.length));
     }
-    
-    // Limpeza final para evitar caracteres estranhos na query de banco
-    tokensToAndSearch = tokensToAndSearch.map(t => t.replace(/[^\w\u00C0-\u017F]/g, ''));
+
+    // Limpeza final: remover underscores de frações (ex: 1_1_4) antes da query de banco,
+    // pois underscore é wildcard em SQL LIKE
+    tokensToAndSearch = tokensToAndSearch.map(t => t.replace(/_/g, ' ').replace(/[^\w\s]/g, '').trim());
     
     console.log(`[DEBUG] Final tokensToAndSearch: ${JSON.stringify(tokensToAndSearch)}`);
     
@@ -274,7 +285,13 @@ export class EnhancedMatchingService {
 
     // Se a busca restrita falhou ou trouxe pouco, fazemos a busca ampla (OR)
     if (dbCandidates.length < 30) {
-      const tokensToOrSearch = importantTokens.slice(0, 4);
+      // OR usa: core + specificTokens + resto dos importantTokens filtrados (expandidos, sem acento)
+      const orPool = [
+        ...(coreItemToken ? [coreItemToken] : []),
+        ...specificTokens.slice(0, 3),
+        ...importantTokens.filter(t => !genericTerms.has(t) && t !== coreItemToken && t.length > 3).slice(0, 3)
+      ];
+      const tokensToOrSearch = Array.from(new Set(orPool)).slice(0, 5);
       const broadCandidates = await prisma.catmatMaterial.findMany({
         where: {
           statusItem: true,
